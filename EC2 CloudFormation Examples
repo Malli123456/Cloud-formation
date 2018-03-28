@@ -1,0 +1,501 @@
+EC2 CloudFormation Examples
+03 MAY 2017 on aws, amazon ec2, cloudformation, ec2, ebs
+This article will go over a few practical examples of EC2 build out using CloudFormation. You should have some familiarity with CloudFormation, EC2, EBS, and VPCs. This article also uses YAML and you should be familiar with the syntax for it.
+
+The following pieces will be discussed:
+
+Creating EC2 instances as part of an existing VPC and Subnet
+Creating basic Security Groups
+Creating self-referencing security groups
+Customizing the instance volume
+Creating and attaching custom EBS volumes to an EC2 instance
+Creating and attaching an Elastic IP to an EC2 instance
+EC2 Instances in CloudFormation
+The first task is defining an EC2 instances in CloudFormation. This is actually pretty easy. If you refer to the AWS::EC2::Instance documentation you'll see that the only required parameter is ImageId.
+
+The ImageId property refers to the AMI that is used for the instance. For this example, I'll use AMI ami-80861296 which is an Ubuntu 16.04 images using HVM virtualization and an EBS backed SSD drive for the instance store (hvm:ebs-ssd). Pretty standard really.
+
+Since this example shows how to launch into an existing VPC, we'll need to include two additional properties; SecurityGroupIds and SubnetId.
+
+SecurityGroupIds is a list of the VPC security groups that the instance will belong to.
+SubnetId will place the instance into a specific subnet in the VPC and the corresponding AvailabilityZone.
+We also want to set the KeyName for the instance so we can reuse an already established key.
+
+We also want to set is the InstanceType property. These refer to the available instance types for EC2 such as t2.nano, t2.micro, and t2.small.
+
+With these properties we end up with a CloudFormation template that looks like:
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+Setting the Instance Name
+To set the instance name, we'll add a Tag attribute with the Key of Name. This is done with the Tag property.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+      Tags:
+        -
+          Key: Name
+          Value: webserver
+Enable Enhanced Monitoring
+Another thing we'll likely want to do is enable enhanced monitoring. This can be done by setting the Monitoring property to true
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      Monitoring: true
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+      Tags:
+        -
+          Key: Name
+          Value: webserver
+Termination Protection
+Another common practice is enabling termination protection to prevent removal of resources accidentally. This equally applies to CloudFormation templates where you could accidentally wipe out your an entire stack of production servers!
+
+To prevent this we can use DisableApiTermination on the instance.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: true
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      Monitoring: true
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+      Tags:
+        -
+          Key: Name
+          Value: webserver
+One thing to keep in mind is that this will prevent the instance from being removed or cleaned up during any rollback operations.
+
+As a result, I would recommend setting this property AFTER you have successfully deployed your stack.
+
+Lastly, when you do go to delete your stack, for whatever reason, you'll need to manually disable termination protection before deleting the stack.
+
+EBS Volumes in CloudFormation
+The next piece is configuring the EBS Volume(s) for the instance. As mentioned above, the instance is is backed by an EBS root volume. There are two different ways you can add volumes to an instance: BlockDeviceMappings and Volumes
+
+What is the difference between BlockDeviceMappings and Volumes? The short answer is, BlockDeviceMappings allow configuration of the instance storage. Volumes are for attaching additional EBS volumes to an instance.
+
+More concretely:
+
+BlockDeviceMappings allow you to configure ephemeral or EBS backed instance volumes that are packaged with the instance
+You use BlockDeviceMappings to adjust the instance storage (the root is /dev/sda1 in this example)
+You can use BlockDeviceMappings to add additional instance volumes
+Volumes can only attach additional EBS volumes to your instance. They do not configure ephemeral storage.
+You cannot attach a device via Volumes that conflicts with an existing BlockDeviceMapping for your instance
+Instance Strorage
+As mentioned BlockDeviceMappings configure the instance storage. This is done through an array of Block Device Mapping Properties.
+
+In order to configure BlockDeviceMappings you will need to set a few properties. In particular, the DeviceName property is required. This is the mount point for the device, such as /dev/sda1.
+
+Additionally, you either configure the VirtualName property for ephemeral storage, or for our example, we'll configure the Ebs property to change the EBS volume that will be back the instance.
+
+The Ebs property is defined by the Amazon Elastic Block Store Block Device Property which allows us to configure the following properties:
+
+DeleteOnTermination - retain the volume after termination
+Encrypted - encrypt the volume
+Iops - provisioned Iops
+SnapshotId - snapshot to base the image from
+VolumeSize - size of the volume in GB
+VolumeType - gp2 for General Purpose SSD, io1 for Provisioned IOPS SSD, st1 for Throughput Optimized HDD, sc1 for Cold HDD, or standard for Magnetic volumes.
+Increase Root Volume Size
+A common task is increasing the size of the root volume. We can do this by configuring the BlockDeviceMappings in the following manner.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      BlockDeviceMappings:
+        -
+          DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: 24
+            VolumeType: gp2
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+The above example increases the size of the root volume to 24GB from the default 8GB by setting the VolumeSize for the DeviceName /dev/sda1. We also need to set the VolumeType to gp2 to ensure that it uses a general purpose SSD drive. If you do not set VolumeType it will default to standard magnetic drive.
+
+Adding Additional Instance Storage
+In addition to overriding the default instance storage properties, you can also add additional instance storage volumes. This is done by adding an additional entry:
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      BlockDeviceMappings:
+        -
+          DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: 24
+            VolumeType: gp2
+        -
+          DeviceName: "/dev/sdf"
+          Ebs:
+            VolumeSize: 64
+            VolumeType: gp2
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+In the above example, we added an additional volume that is presented at /dev/sdf and is 64GB
+
+Independent EBS Volumes
+You can also create EBS volumes independently of the instance and then attach them to instances. This is a two step process:
+
+Create the volume as a resource
+Attach the volume via the Volumes property
+The first piece, creating the resource, uses the AWS::EC2::Volume type to define the resource. The second piece will attach it to the EC2 instance via the Volumes property.
+
+The AWS::EC2::Volume resource allows you to configure the same properties as in BlockDeviceMappings, plus the ability to specify the AvailabilityZone, KmsKeyId, and apply Tags. Additionally, you can specify the Deletion Policy Attribute that will allow you to specify the action to take when the instance is terminated.
+
+Once you have defined the resource, you'll link it to the instance via the Volumes property of the instance. This property takes an array of EC2 Mount Point that have two properties:
+
+Device - the mount point on the instance
+VolumeId - the id of the volume resource
+Putting this together it looks something like this:
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:      
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+      Volumes:
+        -
+          Device: "/dev/sdf"
+          VolumeId: !Ref LogVolume
+
+  LogVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      AvailabilityZone: us-east-1a
+      Size: 24
+      Tags:
+        -
+          Key: Name
+          Value: web-log-volume
+      VolumeType: gp2
+The second resource LogVolume creates a 24GB gp2 EBS volume. This resource is referenced under Volumes and is mounted to /dev/sdf! The instance will still have its root volume attached at /dev/sda1.
+
+Security Groups in CloudFormation
+In the previous example, we supplied an existing security group. Creating one inside the stack is possible as well. In order to create a security group, you will use the AWS::EC2::SecurityGroup resource.
+
+In order to add a Security Group, you'll need to add GroupDescription, which is as expected a description of the security group. It's also a good idea to add the GroupName so that one is not automatically generated for you.
+
+Since this is in a VPC, we also need to define the VpcId property for our existing VPC.
+
+This will end up with a resource definition that looks like:
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server
+      GroupName: web     
+      VpcId: vpc-abc01234
+While this is nice, it isn't that useful without ingress rules. These get defined in the SecurityGroupIngress property and take the form of a the first complex type we've used today, that is the Security Group Rule Property Type.
+
+We are required to specify the IpProtocol property which can be one of tcp, udp,  icmp, or 58 (ICMPv6). tcp, udp, and icmp require that we specify a port range as well.
+
+We specify the port range via the FromPort and ToPort properties. These are the starting and ending ports for our rule. To specify all ports set the FromPort to 0 and the ToPort to 65535. To specify a specific port, use the same value for both, such as FromPort and ToPort set to 8000.
+
+The last part is specifying the source that we are going to allow by setting one of the following properties:  CidrIp, CidrIpv6, or SourceSecurityGroupId. As you could probably deduce CidrIp specifies the IPv4 CIDR range and CidrIpv6 specified the IPv6 CIDR range. Setting CidrIP to 0.0.0.0/0 will allow all IP addresses.
+
+Now for an example. The below template will open ports 80 and 443 to all IPv4 addresses.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server
+      GroupName: web     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        -
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+Instead of CidrIP you could specify SourceSecurityGroupId. This allow connections from resources that belong to the specified Security Group.
+
+This can be useful for saying things like DatabaseSecurityGroup allows tcp access over port 3306 from the WebSecurityGroup.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database server
+      GroupName: database     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: sg-abc01234
+Or if they're in the same template by using Ref.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server
+      GroupName: web     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Database server
+      GroupName: database     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+Self Referencing Security Group
+Another thing you may want to do is make a self referencing security group. This means opening ports in between resources that are assigned the security group.
+
+Consider trying to assign rules for Docker hosts running swarm mode. This creates a pool pool of servers that all coordinate to run Docker containers under a virtual infrastructure. For this to work, according to getting started, we need to open tcp 2377, tcp 7946, udp 7946 and udp 4789 between all the swarm hosts.
+
+In order to do this, we will actually need to use an additional AWS::EC2:SecurityGroupIngress resource that allows us to attach rules to the Security Group.
+
+The reason this is required, is that we need to first create the Security Group before we reference it from within itself. By separating the two steps we can make self-referencing rules.
+
+To do this, we need to reference the same Security Group for both the GroupId and SourceSecurityGroupId. GroupId specifies which Security Group the rule will be added to. As we learned previously, SourceSecurityGroupId is the Security Group we are granting inbound access to.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  SwarmSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Swarm server
+      GroupName: swarm
+      VpcId: vpc-abc01234
+
+  SwarmIngress1:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroup
+      IpProtocol: tcp
+      FromPort: 2377
+      ToPort: 2377
+      SourceSecurityGroupId: !Ref SwarmSecurityGroup
+
+  SwarmIngress2:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroup
+      IpProtocol: tcp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref SwarmSecurityGroup
+
+  SwarmIngress3:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroup
+      IpProtocol: udp
+      FromPort: 7946
+      ToPort: 7946
+      SourceSecurityGroupId: !Ref SwarmSecurityGroup
+
+  SwarmIngress4:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SwarmSecurityGroup
+      IpProtocol: udp
+      FromPort: 4789
+      ToPort: 4789
+      SourceSecurityGroupId: !Ref SwarmSecurityGroup
+As you can see, the above example creates a single Security Group called SwarmSecurityGroup and then attaches four rules to it that are self-referencing.
+
+Security Groups and EC2 Together
+Now that we've seen how to create various types of Security Groups, let's put it all together and reference one from an EC2 instance definition. This is pretty straightforward. All you need to do is replace the hardcoded SecurityGroupId with a reference to the Security Group inside your template.
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server
+      GroupName: web     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      SubnetId: subnet-abc01234
+In this example, we simple add a reference to the WebSecurityGroup inside the SecurityGroupIds property of WebInstance.
+
+Elastic IPs
+The last thing I'm going to discuss is attaching ElasticIPs to your EC2 instance.
+
+To do this we will create a new AWS::EC2::EIP resource and define two properties:
+
+InstanceId - a reference to the instance to assign the EIP to
+Domain - set to vpc to enable the EIP as a VPC enabled address
+That's it. Here's what it looks like:
+
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:  
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      SecurityGroupIds:
+        - sg-abc01234
+      SubnetId: subnet-abc01234
+
+  WebElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref WebInstance
+      Domain: vpc
+Complete View
+The previous example showed broken down pieces. The final example will show the following:
+
+Creating a security group
+Creating an EC2 instance
+Increased root volume on the EC2 instance
+Attaching an externally created EBS volume
+Attached Elastic IP to the instance
+AWSTemplateFormatVersion: "2010-09-09"  
+Resources:
+
+  ## Security group for WebInstance enabling port 80
+  ## from all IP addresses
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web server
+      GroupName: web     
+      VpcId: vpc-abc01234
+      SecurityGroupIngress:
+        -
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ## EC2 Instance with a custom security group
+  ## and a larger root instance device
+  ## and an externally created EBS volume attached
+  WebInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      BlockDeviceMappings:
+        -
+          DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: 24
+            VolumeType: gp2
+      InstanceType: t2.nano
+      ImageId: ami-80861296
+      KeyName: my-key
+      Monitoring: true
+      SecurityGroupIds:
+        - !Ref WebSecurityGroup
+      SubnetId: subnet-abc01234
+      Tags:
+        -
+          Key: Name
+          Value: webserver
+      Volumes:
+        -
+          Device: "/dev/sdf"
+          VolumeId: !Ref LogVolume
+
+  ## EBS Volume for storing web logs
+  LogVolume:
+    Type: AWS::EC2::Volume
+    DeletionPolicy: Snapshot
+    Properties:
+      AvailabilityZone: us-east-1a
+      Size: 64
+      Tags:
+        -
+          Key: Name
+          Value: web-log-volume
+      VolumeType: gp2
+
+  ## Attach EIP to the instance
+  WebElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref WebInstance
+      Domain: vpc
