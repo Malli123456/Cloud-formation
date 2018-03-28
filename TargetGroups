@@ -1,0 +1,38 @@
+Metadata:
+  'AWS::CloudFormation::Designer':
+    ca7958ae-4607-4a37-8617-471036c6c4a4:
+      size:
+        width: 60
+        height: 60
+      position:
+        x: -44.833333333333336
+        'y': -16
+      z: 0
+Resources:
+  ELBV2TG46MQK:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckProtocol: HTTPS
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 4
+      Matcher:
+        HttpCode: '200'
+      Name: Targetgroups
+      Port: 80
+      Protocol: HTTPS
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '20'
+      Targets:
+        - Id: i-037537e0e6994e863
+          Port: 80
+        - Id: i-07090524cf26f4e90
+          Port: 80
+      UnhealthyThresholdCount: 3
+      VpcId: vpc-2647e04e
+      Tags:
+        - Key: key
+          Value: value
+        - Key: key2
+          Value: value2
